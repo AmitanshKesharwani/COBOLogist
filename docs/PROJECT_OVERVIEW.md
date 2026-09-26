@@ -169,3 +169,9 @@ legacy-provenance-engine/
 - [ ] Impact / Results placeholders filled in with real numbers
 - [ ] Pitch deck built
 - [ ] Dry runs completed; demo flow rehearsed
+
+## Known Limitations
+
+**Stage 1 — Rule Extractor scope boundary**
+
+This extractor is intentionally scoped to clean, one-paragraph-per-rule COBOL where each rule is a single IF block with no nesting, no GO TO, and no logic split across multiple paragraphs via PERFORM THRU. Real production COBOL frequently violates all of these assumptions. This extractor demonstrates the pipeline's method on a controlled fixture; generalizing it to arbitrary legacy COBOL would require a proper COBOL grammar parser (e.g. building on an existing COBOL AST library) rather than paragraph-label pattern matching. This is a known, deliberate scope boundary, not an oversight.

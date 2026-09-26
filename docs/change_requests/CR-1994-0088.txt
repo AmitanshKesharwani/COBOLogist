@@ -1,0 +1,22 @@
+CHANGE REQUEST #CR-1994-0088
+Date:       1994-03-11
+Submitted:  R. Haskell, Policy Administration
+Approved:   D. Morrow, VP Operations  (signed 1994-03-14)
+
+SUBJECT: Grace period extension for long-tenured policyholders upon lapse
+
+BACKGROUND:
+Claims dept has flagged repeat complaints from policyholders with 5+ years
+continuous coverage who miss renewal due to address change or banking error
+and are denied on a lapse technicality. Attrition data shows these are
+low-fraud, low-risk accounts.
+
+CHANGE:
+If policy lapsed within 30 days of claim date AND policyholder held
+continuous coverage > 5 years prior to lapse, treat claim as payable.
+No change to fraud review procedure. 30-day window non-negotiable per
+actuarial sign-off (E. Briggs, 1994-03-10).
+
+IMPLEMENTATION:
+Add paragraph to CLAIMS-PROC module. Effective for claims received
+on or after 1994-04-01.

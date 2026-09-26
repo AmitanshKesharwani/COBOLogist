@@ -1,0 +1,17 @@
+INTERNAL COMPLIANCE MEMO
+Date:    2003-09-22
+From:    Legal / Regulatory Affairs
+To:      Claims Systems Development
+Re:      NY State Consent Decree -- Implementation Requirement
+
+Per settlement agreement with the New York State Insurance Department
+(index no. 03-INS-0471, finalized 2003-09-08), the company is required
+to process claims from New York-domiciled policyholders as payable even
+when the incident description field is not completed, provided all other
+material claim fields are present.
+
+Requirement is effective immediately for all NY-state claims.
+Implement as a pre-eligibility override in the claims adjudication
+program. Do not apply to any other state code.
+
+Legal point of contact: C. Adler, ext. 4412.

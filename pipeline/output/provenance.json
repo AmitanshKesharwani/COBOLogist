@@ -1,0 +1,54 @@
+[
+  {
+    "rule_id": "R1",
+    "paragraph_name": "STANDARD-ELIGIBILITY-RULE",
+    "source_line_start": 107,
+    "source_line_end": 122,
+    "condition_text": "WS-POLICY-STATUS   = 'A' AND WS-CLAIM-AMOUNT  <= WS-COVERAGE-LIMIT",
+    "action_text": "MOVE 'Y'           TO WS-PAYABLE MOVE WS-CLAIM-AMOUNT TO WS-PAYOUT-AMOUNT",
+    "comment_text": "Core eligibility check: policy must be active and the submitted amount must not exceed the coverage limit.",
+    "provenance_status": "Self-Evident",
+    "matched_document": null,
+    "matched_excerpt": null,
+    "confidence_note": "Baseline eligibility logic is fully described by its inline comment; no change-request or compliance document is expected to exist for the core business definition of a payable claim. Neither available document addresses active-policy eligibility or coverage-limit thresholds."
+  },
+  {
+    "rule_id": "R2",
+    "paragraph_name": "GRACE-PERIOD-RULE",
+    "source_line_start": 123,
+    "source_line_end": 136,
+    "condition_text": "WS-POLICY-STATUS          = 'L' AND WS-DAYS-SINCE-LAPSE     <= 30 AND WS-POLICY-TENURE-YEARS   > 5",
+    "action_text": "MOVE 'Y'                 TO WS-PAYABLE MOVE WS-CLAIM-AMOUNT     TO WS-PAYOUT-AMOUNT",
+    "comment_text": "Grandfather clause for long-tenured policyholders: a claim filed within the 30-day grace window after a policy lapse is still payable provided the policy had been continuously active for more than 5 years prior to lapsing.",
+    "provenance_status": "Documented",
+    "matched_document": "CR-1994-0088.txt",
+    "matched_excerpt": "If policy lapsed within 30 days of claim date AND policyholder held continuous coverage > 5 years prior to lapse, treat claim as payable.",
+    "confidence_note": "CR-1994-0088 specifies the exact 30-day window and 5-year tenure threshold that appear verbatim in the rule's condition; both numeric values match precisely, not just topically."
+  },
+  {
+    "rule_id": "R3",
+    "paragraph_name": "STATE-CARVE-OUT-RULE",
+    "source_line_start": 137,
+    "source_line_end": 145,
+    "condition_text": "WS-STATE-CODE             = 'NY' AND WS-INCIDENT-DESCRIPTION  = SPACES",
+    "action_text": "MOVE 'Y'                 TO WS-PAYABLE MOVE WS-CLAIM-AMOUNT     TO WS-PAYOUT-AMOUNT",
+    "comment_text": "2003 settlement requirement -- see legal/settlement-NY-2003. Claims originating from NY policyholders are payable even when the incident description field has not been provided.",
+    "provenance_status": "Documented",
+    "matched_document": "legal-settlement-NY-2003.txt",
+    "matched_excerpt": "the company is required to process claims from New York-domiciled policyholders as payable even when the incident description field is not completed, provided all other material claim fields are present.",
+    "confidence_note": "Legal memo specifies NY state and blank incident description as the exact trigger conditions; the COBOL comment directly names this document (see legal/settlement-NY-2003), and the memo explicitly restricts the rule to NY only."
+  },
+  {
+    "rule_id": "R4",
+    "paragraph_name": "ORPHAN-RULE",
+    "source_line_start": 146,
+    "source_line_end": 151,
+    "condition_text": "WS-FISCAL-QTR-END-FLAG    = 'Y'",
+    "action_text": "COMPUTE WS-PAYOUT-AMOUNT = WS-PAYOUT-AMOUNT * 1.005",
+    "comment_text": null,
+    "provenance_status": "Unknown",
+    "matched_document": null,
+    "matched_excerpt": null,
+    "confidence_note": "No documentation found anywhere in the available records explaining the fiscal-quarter-end payout adjustment or the 1.005 multiplication factor; the rule has no inline comment, and neither available change-request document addresses end-of-quarter processing."
+  }
+]
