@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Legacy Provenance Engine — Risk Report</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    background: #f0f2f5;
+    color: #1a2233;
+  }
+
+  /* ── Layout ── */
+  .page { max-width: 860px; margin: 0 auto; padding: 32px 16px 56px; }
+
+  /* ── Header ── */
+  .header {
+    background: #0f1c35;
+    color: #e8edf5;
+    padding: 36px 40px 32px;
+    border-radius: 10px;
+    margin-bottom: 24px;
+  }
+  .header h1 {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    margin-bottom: 8px;
+    color: #ffffff;
+  }
+  .header .pitch {
+    font-size: 14px;
+    color: #8fa3c8;
+    max-width: 640px;
+    line-height: 1.5;
+    margin-bottom: 28px;
+  }
+
+  /* ── Stat strip ── */
+  .stat-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+  }
+  .stat-box {
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 7px;
+    padding: 14px 16px;
+    text-align: center;
+  }
+  .stat-number {
+    font-size: 30px;
+    font-weight: 800;
+    color: #ffffff;
+    line-height: 1;
+    margin-bottom: 5px;
+  }
+  .stat-number.red { color: #f87171; }
+  .stat-label {
+    font-size: 11px;
+    color: #7a93b8;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  /* ── Section headings ── */
+  h2 {
+    font-size: 15px;
+    font-weight: 700;
+    color: #1a2233;
+    margin: 28px 0 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid #d6dae3;
+    padding-bottom: 7px;
+  }
+
+  /* ── Risk table ── */
+  .risk-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #ffffff;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+  .risk-table th {
+    background: #f7f8fa;
+    text-align: left;
+    padding: 10px 14px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #5a6680;
+    border-bottom: 1px solid #e2e6ed;
+  }
+  .risk-table td {
+    padding: 11px 14px;
+    border-bottom: 1px solid #eef0f5;
+    vertical-align: middle;
+    font-size: 13px;
+  }
+  .risk-table tr:last-child td { border-bottom: none; }
+  .risk-table tr.diverging { background: #fff5f5; }
+  .risk-table tr.diverging td:first-child {
+    border-left: 3px solid #ef4444;
+  }
+
+  /* ── Badges ── */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 10px;
+    white-space: nowrap;
+  }
+  .badge-unknown  { background: #fee2e2; color: #991b1b; }
+  .badge-doc      { background: #dcfce7; color: #166534; }
+  .badge-evident  { background: #dbeafe; color: #1e40af; }
+  .badge-divYes   { background: #fee2e2; color: #991b1b; font-weight: 700; }
+  .badge-divNo    { background: #f0fdf4; color: #166534; }
+
+  .rule-name {
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .narrative-cell {
+    font-size: 12px;
+    color: #374151;
+    max-width: 280px;
+  }
+  .narrative-short { display: block; }
+  .narrative-full  { display: none; margin-top: 4px; }
+  .read-more {
+    background: none;
+    border: none;
+    color: #3b82d4;
+    font-size: 11px;
+    cursor: pointer;
+    padding: 0;
+    margin-top: 3px;
+  }
+
+  /* ── Hero card ── */
+  .hero {
+    background: #ffffff;
+    border: 2px solid #ef4444;
+    border-radius: 10px;
+    padding: 28px 32px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 12px rgba(239,68,68,0.1);
+  }
+  .hero-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #1a2233;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .hero-subtitle {
+    font-size: 12px;
+    color: #6b7280;
+    margin-bottom: 18px;
+  }
+  .hero-narrative {
+    font-size: 14px;
+    color: #374151;
+    line-height: 1.65;
+    margin-bottom: 24px;
+    background: #fff5f5;
+    border-left: 3px solid #ef4444;
+    padding: 12px 16px;
+    border-radius: 0 6px 6px 0;
+  }
+
+  .comparison {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .comp-box {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 16px 18px;
+    background: #fafafa;
+  }
+  .comp-box.legacy  { border-top: 3px solid #6366f1; }
+  .comp-box.modern  { border-top: 3px solid #10b981; }
+  .comp-box h4 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #6b7280;
+    margin-bottom: 10px;
+  }
+  .comp-field { font-size: 13px; color: #374151; margin-bottom: 6px; }
+  .comp-field span { font-weight: 600; color: #1a2233; }
+  .comp-payout {
+    font-size: 22px;
+    font-weight: 800;
+    margin-top: 10px;
+  }
+  .payout-legacy { color: #6366f1; }
+  .payout-modern { color: #10b981; }
+
+  .delta-box {
+    margin-top: 16px;
+    background: #fff1f2;
+    border: 1px solid #fecaca;
+    border-radius: 7px;
+    padding: 12px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .delta-label { font-size: 13px; color: #7f1d1d; }
+  .delta-amount { font-size: 20px; font-weight: 800; color: #ef4444; }
+
+  /* ── Documented rule details ── */
+  details {
+    background: #ffffff;
+    border: 1px solid #e2e6ed;
+    border-radius: 8px;
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  summary {
+    padding: 14px 18px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+    color: #1a2233;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    user-select: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::before {
+    content: "▶";
+    font-size: 10px;
+    color: #9ca3af;
+    transition: transform 0.15s;
+    flex-shrink: 0;
+  }
+  details[open] summary::before { transform: rotate(90deg); }
+  .details-body {
+    padding: 0 18px 18px;
+    border-top: 1px solid #f0f2f5;
+    padding-top: 14px;
+  }
+  .doc-ref {
+    font-size: 12px;
+    color: #6b7280;
+    margin-bottom: 10px;
+  }
+  .doc-ref strong { color: #374151; }
+  .doc-narrative {
+    font-size: 13px;
+    color: #374151;
+    line-height: 1.6;
+    background: #f7f8fa;
+    padding: 10px 14px;
+    border-radius: 6px;
+    border-left: 3px solid #22c55e;
+  }
+
+  /* ── Footer ── */
+  .footer {
+    text-align: center;
+    font-size: 12px;
+    color: #9ca3af;
+    border-top: 1px solid #d6dae3;
+    padding-top: 18px;
+    margin-top: 36px;
+  }
+  .footer a { color: #3b82d4; text-decoration: none; }
+  .footer a:hover { text-decoration: underline; }
+
+  @media (max-width: 600px) {
+    .stat-strip       { grid-template-columns: repeat(2, 1fr); }
+    .comparison       { grid-template-columns: 1fr; }
+    .header           { padding: 24px 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ══ 1. HEADER ══════════════════════════════════════════════════════ -->
+  <div class="header">
+    <h1>Legacy Provenance Engine</h1>
+    <p class="pitch">Translation tools tell you the code compiles. We tell you whether you're about to silently delete a rule nobody remembers writing.</p>
+    <div class="stat-strip">
+      <div class="stat-box">
+        <div class="stat-number">4</div>
+        <div class="stat-label">Rules Analyzed</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-number red">25%</div>
+        <div class="stat-label">Unknown / No Docs</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-number red">1</div>
+        <div class="stat-label">Divergences Found</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-number">147</div>
+        <div class="stat-label">Historical Records Mined</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 2. RISK-RANKED TABLE ═══════════════════════════════════════════ -->
+  <h2>Risk-Ranked Rule Table</h2>
+  <table class="risk-table">
+    <thead>
+      <tr>
+        <th>Rule</th>
+        <th>Provenance</th>
+        <th>Times Fired</th>
+        <th>Years Active</th>
+        <th>Divergence</th>
+        <th>Risk Summary</th>
+      </tr>
+    </thead>
+    <tbody>
+
+      <!-- R4 ORPHAN-RULE -->
+      <tr class="diverging">
+        <td><span class="rule-name">ORPHAN-RULE</span></td>
+        <td><span class="badge badge-unknown">🔴 Unknown</span></td>
+        <td>18</td>
+        <td>6</td>
+        <td><span class="badge badge-divYes">✅ Yes</span></td>
+        <td class="narrative-cell">
+          <span class="narrative-short">Rule silently dropped in modernized translation — 18 payout divergences, zero documentation.</span>
+          <span class="narrative-full">Rule ORPHAN-RULE diverges in 18 of 18 firings across all 6 years of production history: the modernized translation silently drops the end-of-quarter payout adjustment entirely, yet no documentation exists anywhere in the available records explaining why this adjustment was introduced or whether it is still required — making this the highest-risk finding in this migration.</span>
+          <button class="read-more" onclick="var p=this.previousElementSibling,s=this.previousElementSibling.previousElementSibling;if(p.style.display==='block'){p.style.display='none';s.style.display='block';this.textContent='read more'}else{p.style.display='block';s.style.display='none';this.textContent='read less'}">read more</button>
+        </td>
+      </tr>
+
+      <!-- R2 GRACE-PERIOD-RULE -->
+      <tr>
+        <td><span class="rule-name">GRACE-PERIOD-RULE</span></td>
+        <td><span class="badge badge-doc">🟢 Documented</span></td>
+        <td>17</td>
+        <td>6</td>
+        <td><span class="badge badge-divNo">❌ No</span></td>
+        <td class="narrative-cell">
+          <span class="narrative-short">No divergence. Backed by 1994 change request; confirm thresholds still current.</span>
+        </td>
+      </tr>
+
+      <!-- R3 STATE-CARVE-OUT-RULE -->
+      <tr>
+        <td><span class="rule-name">STATE-CARVE-OUT-RULE</span></td>
+        <td><span class="badge badge-doc">🟢 Documented</span></td>
+        <td>8</td>
+        <td>6</td>
+        <td><span class="badge badge-divNo">❌ No</span></td>
+        <td class="narrative-cell">
+          <span class="narrative-short">No divergence. Backed by 2003 legal compliance memo; review with legal before any change.</span>
+        </td>
+      </tr>
+
+      <!-- R1 STANDARD-ELIGIBILITY-RULE -->
+      <tr>
+        <td><span class="rule-name">STANDARD-ELIGIBILITY-RULE</span></td>
+        <td><span class="badge badge-evident">🔵 Self-Evident</span></td>
+        <td>112</td>
+        <td>6</td>
+        <td><span class="badge badge-divNo">❌ No</span></td>
+        <td class="narrative-cell">
+          <span class="narrative-short">No divergence. Baseline payability logic; no migration risk.</span>
+        </td>
+      </tr>
+
+    </tbody>
+  </table>
+
+  <!-- ══ 3. HERO CARD — ORPHAN-RULE ════════════════════════════════════ -->
+  <h2>Critical Finding</h2>
+  <div class="hero">
+    <div class="hero-title">
+      <span class="badge badge-unknown">🔴 Unknown</span>
+      ORPHAN-RULE
+    </div>
+    <p class="hero-subtitle">R4 &nbsp;·&nbsp; Source lines 146–151 &nbsp;·&nbsp; 18 divergences in 18 firings &nbsp;·&nbsp; 0 documentation artifacts</p>
+
+    <p class="hero-narrative">Rule ORPHAN-RULE diverges in 18 of 18 firings across all 6 years of production history: the modernized translation silently drops the end-of-quarter payout adjustment entirely, yet no documentation exists anywhere in the available records explaining why this adjustment was introduced or whether it is still required — making this the highest-risk finding in this migration.</p>
+
+    <p style="font-size:12px;color:#6b7280;margin-bottom:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Example Divergence — Log Line 3 &nbsp;(claim date 2019-03-31)</p>
+    <div class="comparison">
+      <div class="comp-box legacy">
+        <h4>Legacy (COBOL)</h4>
+        <p class="comp-field">Claim date: <span>2019-03-31</span></p>
+        <p class="comp-field">Claim amount: <span>$6,391.44</span></p>
+        <p class="comp-field">Quarter-end flag: <span>Y</span></p>
+        <p class="comp-field">Adjustment applied: <span>× 1.005</span></p>
+        <p class="comp-payout payout-legacy">$6,423.40</p>
+      </div>
+      <div class="comp-box modern">
+        <h4>Modern (Python)</h4>
+        <p class="comp-field">Claim date: <span>2019-03-31</span></p>
+        <p class="comp-field">Claim amount: <span>$6,391.44</span></p>
+        <p class="comp-field">Quarter-end flag: <span>Y</span></p>
+        <p class="comp-field">Adjustment applied: <span>none — rule dropped</span></p>
+        <p class="comp-payout payout-modern">$6,391.44</p>
+      </div>
+    </div>
+    <div class="delta-box">
+      <span class="delta-label">Payout difference on this record (underpaid by modern system)</span>
+      <span class="delta-amount">−$31.96</span>
+    </div>
+  </div>
+
+  <!-- ══ 4. DOCUMENTED RULES — COLLAPSIBLE ══════════════════════════════ -->
+  <h2>Documented Rules</h2>
+
+  <details>
+    <summary>
+      <span class="badge badge-doc">🟢 Documented</span>
+      GRACE-PERIOD-RULE &nbsp;·&nbsp; 17 firings &nbsp;·&nbsp; No divergence
+    </summary>
+    <div class="details-body">
+      <p class="doc-ref">Matched document: <strong>CR-1994-0088.txt</strong></p>
+      <p class="doc-narrative">Rule GRACE-PERIOD-RULE produces no divergence and is backed by an explicit 1994 change request specifying the exact 30-day and 5-year thresholds; migration risk is low, but the business stakeholder who approved that threshold should confirm whether the values remain current.</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>
+      <span class="badge badge-doc">🟢 Documented</span>
+      STATE-CARVE-OUT-RULE &nbsp;·&nbsp; 8 firings &nbsp;·&nbsp; No divergence
+    </summary>
+    <div class="details-body">
+      <p class="doc-ref">Matched document: <strong>legal-settlement-NY-2003.txt</strong></p>
+      <p class="doc-narrative">Rule STATE-CARVE-OUT-RULE produces no divergence and is backed by a 2003 legal compliance memo; it should be reviewed with legal counsel before any future modification to confirm the underlying consent decree is still in force.</p>
+    </div>
+  </details>
+
+  <!-- ══ 5. FOOTER ══════════════════════════════════════════════════════ -->
+  <div class="footer">
+    Built with <strong>IBM Bob 2.0</strong> &nbsp;·&nbsp; <a href="#">View Repository</a>
+  </div>
+
+</div>
+</body>
+</html>
