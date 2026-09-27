@@ -4,16 +4,21 @@ pipeline/extract_rules.py — Stage 1: Rule Extraction
 Reads legacy/claims_eligibility.cbl and writes pipeline/output/rules.json,
 a structured table of every rule paragraph in the program.
 
+Rule discovery is structural: any paragraph whose body contains exactly one
+IF...END-IF block and no PERFORM of another paragraph is treated as a rule
+candidate, regardless of its name. This means MAIN-PROCEDURE (which contains
+only PERFORM statements and no IF block) is excluded automatically, and new
+rule paragraphs are found without any name-based configuration.
+
 SCOPE BOUNDARY — KNOWN LIMITATIONS:
-    This extractor is intentionally scoped to clean, one-paragraph-per-rule
-    COBOL where each rule is a single IF block with no nesting, no GO TO,
-    and no logic split across multiple paragraphs via PERFORM THRU. Real
-    production COBOL frequently violates all of these assumptions. This
-    extractor demonstrates the pipeline's method on a controlled fixture;
-    generalizing it to arbitrary legacy COBOL would require a proper COBOL
-    grammar parser (e.g. building on an existing COBOL AST library) rather
-    than paragraph-label pattern matching. This is a known, deliberate scope
-    boundary, not an oversight.
+    Structural discovery handles the common case automatically, but the scope
+    boundary from before still holds. Within a candidate paragraph, the extractor
+    still requires a single unnested IF block with no GO TO and no logic split
+    across multiple paragraphs via PERFORM THRU. Real production COBOL frequently
+    violates all of these assumptions. Generalizing to arbitrary legacy COBOL
+    would require a proper COBOL grammar parser (e.g. building on an existing
+    COBOL AST library) rather than paragraph-label and structure pattern matching.
+    This is a known, deliberate scope boundary, not an oversight.
 """
 
 import json
@@ -26,15 +31,6 @@ import re
 
 SOURCE_FILE = pathlib.Path("legacy/claims_eligibility.cbl")
 OUTPUT_FILE = pathlib.Path("pipeline/output/rules.json")
-
-# Explicit allowlist — only these paragraph names are treated as rule
-# paragraphs. MAIN-PROCEDURE and any other structural paragraphs are ignored.
-RULE_PARAGRAPH_NAMES = [
-    "STANDARD-ELIGIBILITY-RULE",
-    "GRACE-PERIOD-RULE",
-    "STATE-CARVE-OUT-RULE",
-    "ORPHAN-RULE",
-]
 
 # Pattern that identifies a paragraph label line in Area A.
 # Matches 6-8 leading spaces, an all-caps identifier with hyphens, then "."
@@ -52,6 +48,9 @@ ACTION_VERBS = {
     "MOVE", "COMPUTE", "PERFORM", "ADD", "SUBTRACT",
     "MULTIPLY", "DIVIDE", "INITIALIZE", "STOP", "GO",
 }
+
+# Used in structural candidate detection to identify PERFORM statements.
+PERFORM_RE = re.compile(r"^\s+PERFORM\b", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -152,33 +151,83 @@ def _extract_comment(all_lines: list[str], label_lineno: int, body_lines: list[s
 
 
 # ---------------------------------------------------------------------------
+# Structural rule-candidate detection
+# ---------------------------------------------------------------------------
+
+def _is_rule_candidate(body_lines: list[str]) -> bool:
+    """
+    Return True if this paragraph looks like a rule paragraph structurally.
+
+    Criteria (both must hold):
+      1. Exactly one IF...END-IF block present (no nesting, no multiple IFs).
+      2. No PERFORM of another paragraph name — which would mark this as an
+         orchestrating paragraph like MAIN-PROCEDURE rather than a rule.
+
+    Comment lines and blank lines are skipped in the count.
+    """
+    if_count    = 0
+    endif_count = 0
+    has_perform = False
+
+    for line in body_lines:
+        stripped = line.strip().upper()
+        if not stripped or COMMENT_LINE_RE.match(line):
+            continue
+        first_word = stripped.split()[0]
+        if first_word == "IF":
+            if_count += 1
+        elif first_word in ("END-IF", "END-IF."):
+            endif_count += 1
+        elif first_word == "PERFORM":
+            has_perform = True
+
+    return if_count == 1 and endif_count >= 1 and not has_perform
+
+
+# ---------------------------------------------------------------------------
 # Main extraction
 # ---------------------------------------------------------------------------
 
 def extract_rules(source_path: pathlib.Path) -> list[dict]:
     all_lines = source_path.read_text().splitlines()
 
-    # --- Pass 1: find label line numbers for all rule paragraphs ---
-    label_positions: list[tuple[int, str]] = []  # (1-based lineno, name)
+    # --- Pass 1: collect ALL paragraph labels within PROCEDURE DIVISION ---
+    all_labels: list[tuple[int, str]] = []
+    in_procedure = False
     for lineno, line in enumerate(all_lines, start=1):
+        if "PROCEDURE DIVISION" in line.upper():
+            in_procedure = True
+        if not in_procedure:
+            continue
         m = PARAGRAPH_LABEL_RE.match(line)
-        if m and m.group(1) in RULE_PARAGRAPH_NAMES:
-            label_positions.append((lineno, m.group(1)))
+        if m:
+            all_labels.append((lineno, m.group(1)))
 
-    # Sort by appearance order (should already be in order, but be explicit)
-    label_positions.sort(key=lambda t: t[0])
+    all_labels.sort(key=lambda t: t[0])
 
-    # --- Pass 2: extract each rule ---
+    # --- Pass 2: slice each paragraph body and filter to rule candidates ---
+    label_positions: list[tuple[int, str]] = []
+
+    for idx, (label_lineno, para_name) in enumerate(all_labels):
+        if idx + 1 < len(all_labels):
+            body_end = all_labels[idx + 1][0] - 1
+        else:
+            body_end = len(all_lines)
+        body_lines = all_lines[label_lineno - 1 : body_end]
+        if _is_rule_candidate(body_lines):
+            label_positions.append((label_lineno, para_name))
+
+    # --- Pass 3: extract each confirmed rule paragraph ---
+    # Body boundaries are now computed relative to other RULE labels only,
+    # so each body extends to the line before the next rule paragraph.
     rules: list[dict] = []
     for rule_idx, (label_lineno, para_name) in enumerate(label_positions):
-        # Body: from label line to line before the next label (or EOF)
         if rule_idx + 1 < len(label_positions):
             next_label_lineno = label_positions[rule_idx + 1][0]
-            body_end = next_label_lineno - 1        # 1-based, inclusive
+            body_end = next_label_lineno - 1
         else:
             body_end = len(all_lines)
 
-        # 0-based slice for the body
         body_lines = all_lines[label_lineno - 1 : body_end]
 
         condition = _extract_condition(body_lines)
