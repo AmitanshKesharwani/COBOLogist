@@ -1,0 +1,22 @@
+[
+  {
+    "rule_id": "R4",
+    "paragraph_name": "ORPHAN-RULE",
+    "provenance_status": "Documented",
+    "matched_document": "doc1",
+    "times_fired": 3,
+    "distinct_years_fired": 2,
+    "first_fired": "2020-01-01",
+    "last_fired": "2022-12-31"
+  },
+  {
+    "rule_id": "R1",
+    "paragraph_name": "GRACE-PERIOD-RULE",
+    "provenance_status": "Self-Evident",
+    "matched_document": "doc2",
+    "times_fired": 2,
+    "distinct_years_fired": 1,
+    "first_fired": "2021-06-01",
+    "last_fired": "2021-06-01"
+  }
+]
