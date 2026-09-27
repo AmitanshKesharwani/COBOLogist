@@ -2,29 +2,38 @@
 pipeline/verify_divergence.py — Stage 4: Divergence Verification
 
 Reads:
-  - pipeline/output/firing_frequency.json  (rules + provenance + firing stats)
-  - history/production_log_2019_2024.jsonl  (raw historical records)
-  - modern/claims_eligibility.py            (imported directly)
+  - pipeline/output/firing_frequency.json      (rules + provenance + firing stats)
+  - pipeline/output/cobol_batch_results.dat    (real compiled COBOL output, one line
+                                                per record: NNNNN|payable|payout_cents)
+  - history/production_log_2019_2024.jsonl     (raw historical records, for modern-side
+                                                evaluation and ablation)
+  - modern/claims_eligibility.py               (imported directly)
 
 Writes:
   - pipeline/output/final_report.json
 
 Process:
-  1. For every historical record, run full legacy reference logic AND
-     modern.evaluate_claim. Records where payable differs OR
-     |payout_delta| > EPSILON are the diverging set.
+  1. Load real COBOL output from cobol_batch_results.dat. Join to JSONL records by
+     record_number (1-based line index). This is the authoritative legacy ground truth —
+     compiled GnuCOBOL output, not a Python reimplementation.
 
-  2. For each record in the diverging set only, perform ablation-based
-     attribution: re-run legacy with each rule's ACTION suppressed
-     (condition still evaluated, effect skipped). Whichever rule's
-     suppression makes ablated-legacy match modern is the responsible rule.
-     This is never run against non-diverging records — suppressing an
-     inactive rule trivially still "matches," producing false attributions.
+  2. For every record, compare COBOL legacy output vs. modern.evaluate_claim.
+     Records where payable differs OR |payout_delta| > EPSILON are the diverging set.
 
-  3. Combine per-rule divergence counts with Stage 3 firing stats and
-     Stage 2 provenance data. Add LLM-authored risk narratives (hardcoded,
-     reviewed once — see LLM REASONING NOTICE below). Sort: diverging +
-     Unknown first, then Documented, then Self-Evident.
+  3. For each record in the diverging set only, perform ablation-based attribution:
+     re-run legacy with each rule's ACTION suppressed (condition still evaluated, effect
+     skipped). Whichever rule's suppression makes ablated-legacy match modern is the
+     responsible rule. This is never run against non-diverging records.
+
+     NOTE: Ablation still uses Python suppression logic (_evaluate_legacy_ablated).
+     This produces correct relative attribution because the comparison is
+     modern-output vs. ablated-Python — the absolute payout values are consistent
+     within that comparison. Ablation will be replaced with compiled COBOL ablation
+     variants (one per rule, action lines replaced by CONTINUE) in a future step.
+
+  4. Combine per-rule divergence counts with Stage 3 firing stats and Stage 2
+     provenance data. Add LLM-authored risk narratives (hardcoded, reviewed once).
+     Sort: diverging + Unknown first, then Documented, then Self-Evident.
 
 LLM REASONING NOTICE:
     The risk_narrative strings in RISK_NARRATIVES below were authored by
@@ -52,9 +61,10 @@ from claims_eligibility import evaluate_claim  # noqa: E402
 # Configuration
 # ---------------------------------------------------------------------------
 
-FREQ_FILE   = pathlib.Path("pipeline/output/firing_frequency.json")
-LOG_FILE    = pathlib.Path("history/production_log_2019_2024.jsonl")
-OUTPUT_FILE = pathlib.Path("pipeline/output/final_report.json")
+FREQ_FILE        = pathlib.Path("pipeline/output/firing_frequency.json")
+COBOL_RESULTS    = pathlib.Path("pipeline/output/cobol_batch_results.dat")
+LOG_FILE         = pathlib.Path("history/production_log_2019_2024.jsonl")
+OUTPUT_FILE      = pathlib.Path("pipeline/output/final_report.json")
 
 EPSILON = 0.01  # payout equality threshold
 
@@ -91,7 +101,37 @@ RISK_NARRATIVES: dict[str, str] = {
 }
 
 # ---------------------------------------------------------------------------
-# Legacy reference implementation (full COBOL logic, including ORPHAN-RULE)
+# Load real COBOL output
+# ---------------------------------------------------------------------------
+
+def _load_cobol_results(dat_path: pathlib.Path) -> dict[int, tuple[str, float]]:
+    """
+    Parse pipeline/output/cobol_batch_results.dat into a dict keyed by
+    record_number (1-based int).
+
+    Line format produced by the COBOL batch program:
+        NNNNN|payable|payout_cents
+    where NNNNN is zero-padded to 5 digits (e.g. "00003"),
+    payable is "Y" or "N", and payout_cents is a zero-padded integer
+    (e.g. "000642339" = $6,423.39).
+
+    Returns: {record_number: (payable_str, payout_dollars_float)}
+    """
+    results: dict[int, tuple[str, float]] = {}
+    for line in dat_path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split("|")
+        rec_num = int(parts[0])          # strip leading zeros
+        payable = parts[1].strip()
+        payout  = int(parts[2].strip()) / 100  # cents → dollars (exact integer division)
+        results[rec_num] = (payable, payout)
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Legacy scratch variables — still needed by ablation functions
 # ---------------------------------------------------------------------------
 
 def _compute_scratch(r: dict) -> tuple[int, int]:
@@ -103,25 +143,22 @@ def _compute_scratch(r: dict) -> tuple[int, int]:
     return days_since_lapse, policy_tenure_years
 
 
-def _evaluate_legacy_full(r: dict) -> tuple[str, float]:
-    """Full legacy evaluation — all four rules active."""
+# SUPERSEDED — kept for reference until ablation variants are also replaced
+# with compiled COBOL variants. _evaluate_legacy_full is no longer called
+# in the main pipeline; real COBOL output is loaded from cobol_batch_results.dat.
+def _evaluate_legacy_full_python(r: dict) -> tuple[str, float]:  # noqa: dead-code
+    """Python mirror of full COBOL logic (no longer used as ground truth)."""
     payable = "N"
     payout  = 0.0
     days, tenure = _compute_scratch(r)
-
-    # STANDARD-ELIGIBILITY-RULE
     if r["policy_status"] == "A" and r["claim_amount"] <= r["coverage_limit"]:
         payable = "Y"; payout = r["claim_amount"]
-    # GRACE-PERIOD-RULE
     if r["policy_status"] == "L" and days <= 30 and tenure > 5:
         payable = "Y"; payout = r["claim_amount"]
-    # STATE-CARVE-OUT-RULE
     if r["state_code"] == "NY" and r["incident_description"].strip() == "":
         payable = "Y"; payout = r["claim_amount"]
-    # ORPHAN-RULE
     if r["fiscal_qtr_end_flag"] == "Y":
         payout = round(payout * 1.005, 2)
-
     return payable, payout
 
 
@@ -185,24 +222,25 @@ def _rule_sort_key(entry: dict) -> tuple[int, int]:
 
 def run(
     freq_path: pathlib.Path,
+    cobol_path: pathlib.Path,
     log_path: pathlib.Path,
     output_path: pathlib.Path,
 ) -> list[dict]:
     # Load inputs
-    freq_data = json.loads(freq_path.read_text())
-    raw_lines = [l for l in log_path.read_text().splitlines() if l.strip()]
-    records   = [json.loads(l) for l in raw_lines]
+    freq_data    = json.loads(freq_path.read_text())
+    cobol_out    = _load_cobol_results(cobol_path)   # real COBOL ground truth
+    raw_lines    = [l for l in log_path.read_text().splitlines() if l.strip()]
+    records      = [json.loads(l) for l in raw_lines]
 
     # Index Stage 3 data by rule_id
-    freq_by_id = {r["rule_id"]: r for r in freq_data}
     rule_ids   = [r["rule_id"] for r in freq_data]
 
-    # ── Step 1: full legacy vs. modern comparison ──────────────────────────
+    # ── Step 1: real COBOL output vs. modern ──────────────────────────────
     diverging_records: list[tuple[int, dict, tuple, tuple]] = []
-    # (1-based line number, record, legacy_output, modern_output)
+    # (1-based line number, record, cobol_legacy_output, modern_output)
 
     for lineno, rec in enumerate(records, start=1):
-        leg_out = _evaluate_legacy_full(rec)
+        leg_out = cobol_out[lineno]          # authoritative: compiled COBOL
         mod_out = evaluate_claim(**rec)
         if not _outputs_match(leg_out, mod_out):
             diverging_records.append((lineno, rec, leg_out, mod_out))
@@ -261,7 +299,7 @@ def run(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    results = run(FREQ_FILE, LOG_FILE, OUTPUT_FILE)
+    results = run(FREQ_FILE, COBOL_RESULTS, LOG_FILE, OUTPUT_FILE)
     print(f"Wrote {len(results)} entries to {OUTPUT_FILE}")
     print()
     print(f"{'rule_id':<5}  {'paragraph_name':<30}  {'provenance':<14}  "

@@ -14,9 +14,9 @@
       "log_line": 3,
       "claim_date": 20190331,
       "claim_amount": 6391.44,
-      "legacy_payout": 6423.4,
+      "legacy_payout": 6423.39,
       "modern_payout": 6391.44,
-      "payout_difference": 31.96
+      "payout_difference": 31.95
     },
     "risk_narrative": "Rule ORPHAN-RULE diverges in 18 of 18 firings across all 6 years of production history: the modernized translation silently drops the end-of-quarter payout adjustment entirely, yet no documentation exists anywhere in the available records explaining why this adjustment was introduced or whether it is still required \u2014 making this the highest-risk finding in this migration."
   },
