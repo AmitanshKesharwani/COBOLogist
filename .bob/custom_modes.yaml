@@ -1,0 +1,23 @@
+# .bob/custom_modes.yaml
+
+# Minimal custom modes for this repository
+
+modes:
+  Orchestrator:
+    description: "Runs the full end‑to‑end pipeline (extract, provenance, gold set, COBOL reference, divergence verification)."
+    steps:
+      - extract_rules.py
+      - recover_provenance.py
+      - mine_golden_dataset.py
+      - generate_cobol_reference.py
+      - generate_ablation_variants.py
+      - verify_divergence.py
+
+  PipelineEngineer:
+    description: "Focused on deterministic stages (1, 3, 4) – rule extraction, golden‑dataset mining, and divergence verification."
+    steps:
+      - extract_rules.py
+      - mine_golden_dataset.py
+      - verify_divergence.py
+
+# No additional settings required for this simple project.
