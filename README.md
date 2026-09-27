@@ -1,177 +1,565 @@
 # COBOLogist
 
-> **One-Line Pitch:** A risk-auditing tool that tells you what business rules you'll silently break when modernizing legacy code — and why anyone should care — instead of just translating code and hoping.
+> **A risk-auditing engine for legacy modernization that identifies business rules that may be silently lost during migration — and provides the evidence needed to understand why they matter.**
+
+## Overview
+
+Modernizing legacy systems such as COBOL applications is not simply a code-translation problem.
+
+A translated program may compile, pass conventional tests, and still silently remove an undocumented business rule that has been relied upon for years.
+
+The **Legacy Provenance Engine** addresses this problem by analyzing legacy business rules, their historical usage, their documentation, and the behavior of the modernized implementation.
+
+The system produces an auditable report that answers:
+
+* **What business rules exist in the legacy system?**
+* **Where did those rules come from?**
+* **How often did they actually occur in production history?**
+* **Does the modern implementation behave differently?**
+* **Which legacy rule is responsible for the divergence?**
 
 ---
 
-## The Problem
+# The Problem
 
-Legacy modernization projects — COBOL migrations being the canonical example — are almost always judged on a single criterion: does the translated code compile and pass basic tests? That bar is dangerously low.
+Legacy systems often contain business logic that is difficult to understand or trace back to its original purpose.
 
-Decades-old codebases routinely encode undocumented business logic: edge-case handling baked in after a 1987 regulatory memo, a grace-period rule added to prevent a specific fraud vector, a state-level carve-out negotiated in a contract no one can locate anymore. The engineers who wrote those rules have retired. The comments, if they exist at all, say *what* the code does, not *why* it was written that way.
+A rule may have been introduced because of:
 
-Existing tooling attacks the translation problem, not the understanding problem. Compiler-upgrade advisors validate that modernized code behaves identically to legacy code on synthetic inputs. Natural-language code explainers tell you what a paragraph of COBOL does in plain English. Symbolic-execution test generators synthesize test cases that exercise branches. All of these validate that code *works* — but none of them tell you *why a rule exists*, *what real-world evidence there is that it ever mattered*, or *whether it's safe to drop it* before you translate.
+* an old regulatory requirement
+* a contractual exception
+* a fraud-prevention measure
+* a temporary business decision
+* an edge case discovered years ago
 
----
+Over time, the people who introduced these rules may leave the organization, while the original documentation becomes difficult to locate.
 
-## The Solution — How It Works
+Traditional modernization tools primarily focus on whether the translated code works.
 
-The Legacy Provenance Engine is a four-stage pipeline that answers those questions systematically.
+The Legacy Provenance Engine adds another layer:
 
-**1. Rule Extraction**
-
-The first stage performs deterministic static analysis on the legacy source. It parses the code into a structured rule table where each row captures a condition, the action taken when that condition is true, and the exact source location (file, line range, paragraph name). No model judgment is involved — this is pure program analysis. The output is a machine-readable manifest of every decision point in the program.
-
-**2. Provenance Recovery**
-
-The second stage takes the rule table and attempts to explain where each rule came from. It searches the available documentation corpus — change-request tickets, commit messages, inline comments, compliance memos — and tries to match each rule to a source of intent. Rules are tagged one of three ways: **Documented** (a written artifact clearly accounts for this rule), **Inferred** (a plausible link to documentation exists but is not explicit), or **Unknown** (no documentation evidence found). Fuzzy matching of freeform historical text is delegated to an LLM, since that is a legitimate use case where a wrong guess is reviewable and low-stakes.
-
-**3. Golden Dataset Mining**
-
-The third stage replays real historical transaction logs against the extracted rules to compute empirical evidence. For each rule, it counts how many times that rule fired across the available transaction history, and what the outcomes were. Rules that never fired — or that fired only in very specific circumstances — are flagged as zero-evidence or low-evidence. This stage is pure computation: counting, grouping, and frequency analysis, with no model involvement.
-
-**4. Divergence Verification**
-
-The fourth and final stage runs both the legacy code and the modernized code against the same historical transaction set, then diffs the outputs field by field. Any output that differs between legacy and modern versions is a divergence. Each divergence is joined to its corresponding rule's provenance tag and historical firing frequency, producing a single ranked report. The diff itself is deterministic. An LLM is used only to write the plain-English explanation of *why* a divergence is meaningful — it is never used to decide whether two outputs match.
+> **Before trusting the modernization, understand which legacy rules actually matter and whether the new implementation preserves them.**
 
 ---
 
-**Example output:**
+# How It Works
 
+The project uses a **four-stage pipeline**.
+
+```text
+             ┌──────────────────────┐
+             │    Legacy COBOL      │
+             │       Source         │
+             └──────────┬───────────┘
+                        │
+                        ▼
+              ┌───────────────────┐
+              │ 1. Rule Extraction│
+              └─────────┬─────────┘
+                        │
+                        ▼
+                 rules.json
+                        │
+             ┌──────────┴──────────┐
+             │                     │
+             ▼                     ▼
+   ┌───────────────────┐   ┌───────────────────┐
+   │ 2. Provenance      │   │ 3. Historical     │
+   │    Recovery        │   │    Mining         │
+   └─────────┬─────────┘   └─────────┬─────────┘
+             │                       │
+             ▼                       ▼
+      provenance.json       firing_frequency.json
+             │                       │
+             └──────────┬────────────┘
+                        │
+                        ▼
+              ┌────────────────────┐
+              │ 4. Divergence      │
+              │    Verification    │
+              └──────────┬─────────┘
+                         │
+                         ▼
+                 final_report.json
 ```
-Rule #4 diverges. No documentation found. Fired 12 times in 5 years, all approved.
+
+---
+
+# Pipeline Stages
+
+## 1. Rule Extraction
+
+The first stage performs deterministic analysis of the legacy COBOL source.
+
+It identifies business-rule decision points and records information such as:
+
+* Rule ID
+* Condition
+* Action
+* Paragraph name
+* Source file
+* Source line range
+
+The result is a machine-readable rule catalogue.
+
+```text
+legacy/claims_eligibility.cbl
+              │
+              ▼
+      Rule Extraction
+              │
+              ▼
+pipeline/output/rules.json
 ```
 
-That single line is the product's core value: it does not just say a rule broke — it tells you the rule has real production history, no paper trail, and that every time it fired, something got approved that might now be rejected silently.
+This stage is intentionally deterministic so that the extracted rule table is reproducible and auditable.
 
 ---
 
-## Architecture Diagram
+## 2. Provenance Recovery
 
-```mermaid
-flowchart TD
-    A["Legacy Source\n(.cbl / .cob)"] --> S1["Stage 1\nRule Extraction"]
-    S1 --> RT["Rule Table\n(condition → action → location)"]
+The second stage attempts to determine **why each rule exists**.
 
-    D["Docs Folder\n(change requests, comments, memos)"] --> S2["Stage 2\nProvenance Recovery"]
-    RT --> S2
-    S2 --> PT["Provenance Tags\n(Documented / Inferred / Unknown)"]
+The rule catalogue is matched against available historical documentation such as:
 
-    H["Historical Transaction Log"] --> S3["Stage 3\nGolden Dataset Mining"]
-    RT --> S3
-    S3 --> FT["Firing Frequencies\n(per rule)"]
+* change requests
+* commit messages
+* comments
+* compliance documents
+* historical notes
 
-    M["Modernized Source\n(translated / refactored)"] --> S4["Stage 4\nDivergence Verification"]
-    H --> S4
-    PT --> S4
-    FT --> S4
-    S4 --> R["Ranked Report\n(divergence + provenance + frequency)"]
+Rules are classified according to the available evidence:
+
+* **Documented** — a written artifact clearly explains the rule.
+* **Inferred** — there is a plausible connection to available documentation.
+* **Unknown** — no supporting documentation was found.
+
+LLM assistance can be used for fuzzy matching of historical text, while the supporting evidence remains available for human review.
+
+```text
+rules.json
+    +
+Documentation Corpus
+    │
+    ▼
+Provenance Recovery
+    │
+    ▼
+provenance.json
 ```
 
 ---
 
-## What's Deterministic vs. What Uses an LLM
+## 3. Golden Dataset Mining
 
-| Stage | Deterministic or LLM-assisted | Why |
-|---|---|---|
-| Stage 1 — Rule Extraction | Deterministic | Pure static analysis. No model judgment on safety-critical logic. The rule table must be reproducible and auditable. |
-| Stage 2 — Provenance Recovery | LLM-assisted | Fuzzy matching of freeform historical text is a legitimate LLM use case. A wrong match is low-risk: a human reviewer sees the evidence and can disagree. |
-| Stage 3 — Golden Dataset Mining | Deterministic | Pure computation and counting over structured log data. Frequencies are facts, not opinions. |
-| Stage 4 — Divergence Verification | Deterministic for the diff; LLM-assisted only for plain-English explanation | Whether two output fields match is a binary fact determined by exact comparison. The LLM writes the human-readable summary of a divergence; it never decides whether one exists. |
+The third stage uses historical transaction data to determine how frequently each rule actually occurred.
 
-Safety-critical decisions in this pipeline are deliberately kept boring and auditable. The rule table is a static artifact. Divergence detection is exact string/numeric comparison. LLM reasoning is used only in two places — provenance text matching and report narration — and in both cases the raw evidence is always surfaced alongside the model's interpretation so a human can verify or override. If the model gets provenance wrong, the worst outcome is a mislabeled tag that a reviewer catches. The diff is never delegated.
+The system replays the historical dataset and calculates information such as:
 
----
+* Number of times a rule fired
+* Years in which it fired
+* Outcomes associated with the rule
+* First and last observed occurrence
 
-## Role of IBM Bob in This Project
+This provides empirical evidence about the historical importance of a rule.
 
-Bob plays two distinct roles in this project.
-
-**As development partner:** The entire pipeline was planned, built, and debugged using Bob's Plan, Agent, and Orchestrator modes. Bob was used to decompose the architecture into stages, write and refine each pipeline script, spawn subagents for isolated file-generation tasks (fixture fabrication, log generation, document drafting), and track progress through checkpoint-based session exports. The conversation history in `bob_sessions/` captures the full build sequence.
-
-**As a pipeline component:** Bob's document-understanding capability directly powers Stage 2. When the pipeline needs to match a rule against a corpus of change-request documents, it calls Bob (via a configured skill) to perform the fuzzy semantic match and return a provenance tag with a cited excerpt. This is the only place in the pipeline where Bob's reasoning appears in the output artifact.
-
-**Bob artifacts in this repo:**
-
-- [`AGENTS.md`](../AGENTS.md) — agent role definitions and task assignments used during development
-- [`.bob/custom_modes.yaml`](../.bob/custom_modes.yaml) — custom Bob modes configured for this project (Orchestrator, Pipeline Engineer)
-- [`.bob/skills/`](../.bob/skills/) — custom skills loaded into Bob for provenance matching and report narration
-- [`bob_sessions/`](../bob_sessions/) — exported session logs capturing planning and build conversations
-
----
-
-## Demo Scenario
-
-The demo fixture is a small claims-eligibility program that evaluates whether a submitted insurance claim qualifies for payment. It contains four to five rules: a standard eligibility rule, a 30-day grace-period rule for lapsed policies, a state regulatory carve-out that overrides the standard rule for specific jurisdictions, and one orphaned rule — a condition with no corresponding change-request document, no comment, and no obvious connection to any known policy — that happens to have fired a handful of times in the historical log.
-
-The demo's climax is the modernized translation silently dropping the orphaned rule's behavior. The divergence report catches it, reports zero documentation, shows its real firing history, and forces the question: *was this intentional?* That moment is the pitch.
-
----
-
-## Positioning vs. Existing Tools
-
-| Tool | What it does | What it doesn't do |
-|---|---|---|
-| **IBM CUAZ** (IBM Db2 for z/OS & Compiler Upgrade Assistant) | Compiler-version upgrade guidance, inventory scanning, dependency mapping | Does not recover business rationale; does not use production evidence to assess rule importance |
-| **watsonx Code Assistant for Z** | Natural-language explanation of COBOL paragraphs, translation assistance, test generation guidance | Does not tell you *why* a rule was written; does not validate against historical production behavior |
-| **IBM Research Symbolic-Execution Equivalence Testing** | Generates synthetic test cases that exercise branches; proves behavioral equivalence on those cases | Synthetic inputs cannot replicate decades of real edge-case distribution; does not link rules to documentation |
-| **Legacy Provenance Engine** | Mines real historical production evidence for every extracted rule; recovers documented business rationale from freeform artifact corpora; surfaces undocumented rules with real firing history before translation | — |
-
-This tool is complementary to all of the above, not a competitor — it is a pre-flight risk layer that answers the question the others assume has already been answered.
-
----
-
-## Impact / Results
-
-*(To be filled in after the pipeline runs on the fixture.)*
-
-- **[X]** rules extracted from the fixture program
-- **[Y]%** of rules tagged Undocumented or Unknown
-- **[Z]** real divergence(s) caught between legacy and modernized versions
-- **[N]** of those divergences had zero documentation and non-zero firing history
-
----
-
-## Repo Structure
-
+```text
+Historical Transactions
+          +
+      Rule Table
+          │
+          ▼
+ Golden Dataset Mining
+          │
+          ▼
+firing_frequency.json
 ```
+
+This stage is deterministic: frequencies and counts are computed directly from the available data.
+
+---
+
+## 4. Divergence Verification
+
+The final stage compares the legacy implementation against the modernized implementation.
+
+Both implementations process the same historical transaction set.
+
+```text
+Historical Data
+      │
+      ├───────────────┐
+      ▼               ▼
+ Legacy COBOL     Modern Python
+      │               │
+      └───────┬───────┘
+              ▼
+       Output Comparison
+              │
+              ▼
+         Divergences
+```
+
+When a difference is detected, the system uses **rule ablation** to determine which legacy rule caused it.
+
+For each rule, an ablated version of the COBOL program is created where that rule's action is suppressed.
+
+If suppressing a particular rule causes the legacy output to match the modern output, that rule becomes the candidate cause of the divergence.
+
+This provides a concrete attribution mechanism instead of simply reporting that two programs produced different results.
+
+---
+
+# Ablation Testing
+
+Ablation is one of the key mechanisms of the project.
+
+For example:
+
+```text
+Original Rule:
+
+IF ORPHAN-RULE-CONDITION
+    PERFORM SPECIAL-ACTION
+END-IF
+```
+
+The ablated version becomes:
+
+```text
+IF ORPHAN-RULE-CONDITION
+    CONTINUE
+END-IF
+```
+
+Everything else remains unchanged.
+
+The outputs can then be compared:
+
+```text
+Original COBOL
+      │
+      ├── Claim A → APPROVED
+      └── Claim B → DENIED
+
+Ablated COBOL
+      │
+      ├── Claim A → DENIED
+      └── Claim B → DENIED
+```
+
+If the modern implementation also produces `DENIED` for Claim A, the ablation provides evidence that the suppressed rule explains the divergence.
+
+---
+
+# Deterministic vs LLM-Assisted Components
+
+A core design principle is to keep safety-critical verification deterministic.
+
+| Stage                 | Approach      | Purpose                                      |
+| --------------------- | ------------- | -------------------------------------------- |
+| Rule Extraction       | Deterministic | Extract rules reproducibly                   |
+| Provenance Recovery   | LLM-assisted  | Match rules against historical documentation |
+| Golden Dataset Mining | Deterministic | Calculate real historical frequencies        |
+| Divergence Detection  | Deterministic | Perform exact output comparison              |
+| Report Narration      | LLM-assisted  | Explain detected findings in plain English   |
+
+The LLM is **not responsible for deciding whether two program outputs are equal**.
+
+The actual comparison remains deterministic and auditable.
+
+---
+
+# Example Finding
+
+A potential output could look like:
+
+```text
+Rule #4 diverges.
+No documentation found.
+Fired 12 times in 5 years.
+All observed outcomes were approved.
+```
+
+This is more useful than simply reporting:
+
+```text
+Legacy != Modern
+```
+
+The report connects the technical divergence with historical evidence and provenance.
+
+---
+
+# Demo Scenario
+
+The repository contains a small claims-eligibility demonstration based on a legacy COBOL program.
+
+The fixture contains several business rules, including:
+
+* Standard eligibility logic
+* A grace-period rule
+* A state-specific regulatory exception
+* An orphaned rule with no obvious documentation
+
+The demonstration introduces a modernization error where the orphaned rule's behavior is silently lost.
+
+The pipeline detects the resulting behavioral difference and connects it to:
+
+1. The affected rule
+2. Its historical firing frequency
+3. Its documentation/provenance status
+4. The resulting divergence
+
+This demonstrates the central purpose of the project: **finding business logic that can disappear during modernization without being obvious from normal testing.**
+
+---
+
+# Output
+
+The final pipeline produces a consolidated report:
+
+```text
+output/
+└── final_report.json
+```
+
+A report entry can contain information such as:
+
+```json
+{
+  "rule_id": "R4",
+  "provenance": "Unknown",
+  "times_fired": 12,
+  "distinct_years_fired": 5,
+  "divergence_count": 1,
+  "example_record": "...",
+  "risk_narrative": "..."
+}
+```
+
+The exact fields depend on the current pipeline implementation.
+
+The report is designed to be consumed by:
+
+* auditors
+* modernization teams
+* risk analysts
+* compliance teams
+* downstream reporting systems
+
+---
+
+# Repository Structure
+
+```text
 legacy-provenance-engine/
-├── legacy/                  # Original COBOL source (fixture)
-├── modern/                  # Translated / modernized version (with injected bug)
-├── history/                 # Historical transaction log (fabricated fixture data)
+│
+├── legacy/
+│   ├── claims_eligibility.cbl
+│   └── ablation/
+│
+├── modern/
+│   └── claims_eligibility.py
+│
+├── history/
+│   └── production_log_2019_2024.jsonl
+│
 ├── docs/
-│   ├── change_requests/     # Fabricated change-request documents for provenance corpus
-│   └── PROJECT_OVERVIEW.md  # This file
-├── pipeline/                # Stage 1–4 scripts
+│   ├── change_requests/
+│   └── PROJECT_OVERVIEW.md
+│
+├── pipeline/
+│   ├── generate_ablation_variants.py
+│   ├── verify_divergence.py
+│   └── output/
+│
 ├── .bob/
-│   ├── custom_modes.yaml    # Custom Bob modes
-│   └── skills/              # Custom Bob skills
-├── bob_sessions/            # Exported Bob session logs
-├── output/                  # Generated reports
-└── AGENTS.md                # Agent role definitions
+│   ├── custom_modes.yaml
+│   └── skills/
+│
+├── bob_sessions/
+│
+├── output/
+│
+└── AGENTS.md
 ```
 
 ---
 
-## Team Workplan / Status Checklist
+# Execution Flow
 
-- [ ] Fixture COBOL program written (`legacy/claims_eligibility.cbl`)
-- [ ] Historical transaction log fabricated (`history/transactions.json`)
-- [ ] Change-request documents fabricated (`docs/change_requests/`)
-- [ ] Modernized / translated version written with injected silent bug (`modern/`)
-- [ ] Stage 1 — Rule Extraction script built (`pipeline/stage1_extract.py`)
-- [ ] Stage 2 — Provenance Recovery script built (`pipeline/stage2_provenance.py`)
-- [ ] Stage 3 — Golden Dataset Mining script built (`pipeline/stage3_mining.py`)
-- [ ] Stage 4 — Divergence Verification script built (`pipeline/stage4_divergence.py`)
-- [ ] Bob custom mode + skill configured (`.bob/custom_modes.yaml`, `.bob/skills/`)
-- [ ] Subagent spawn evidence captured in `bob_sessions/`
-- [ ] Full pipeline run end-to-end; report generated in `output/`
-- [ ] Impact / Results placeholders filled in with real numbers
-- [ ] Pitch deck built
-- [ ] Dry runs completed; demo flow rehearsed
+The intended workflow is:
 
-## Known Limitations
+```text
+1. Extract rules
+        ↓
+2. Recover provenance
+        ↓
+3. Mine historical usage
+        ↓
+4. Generate ablation variants
+        ↓
+5. Compile and execute variants
+        ↓
+6. Run original COBOL program
+        ↓
+7. Compare COBOL vs Python
+        ↓
+8. Attribute divergences
+        ↓
+9. Generate final_report.json
+```
 
-**Stage 1 — Rule Extractor scope boundary**
+---
 
-This extractor is intentionally scoped to clean, one-paragraph-per-rule COBOL where each rule is a single IF block with no nesting, no GO TO, and no logic split across multiple paragraphs via PERFORM THRU. Real production COBOL frequently violates all of these assumptions. This extractor demonstrates the pipeline's method on a controlled fixture; generalizing it to arbitrary legacy COBOL would require a proper COBOL grammar parser (e.g. building on an existing COBOL AST library) rather than paragraph-label pattern matching. This is a known, deliberate scope boundary, not an oversight.
+# Key Design Principles
+
+### Deterministic
+
+The rule extraction, historical analysis, and output comparison are designed to be reproducible.
+
+### Auditable
+
+Important findings can be traced back to source rules, historical records, and documentation evidence.
+
+### Attribution-focused
+
+The system does not stop at detecting a difference. It attempts to identify the specific legacy rule responsible.
+
+### Evidence-driven
+
+Historical production behavior is used to determine whether a rule actually occurred and how frequently.
+
+### Human-reviewable
+
+LLM-assisted steps are limited to areas where human review can validate the underlying evidence.
+
+---
+
+# Role of IBM Bob
+
+IBM Bob was used in two ways during development.
+
+### Development Partner
+
+Bob's Plan, Agent, and Orchestrator modes were used to help:
+
+* decompose the architecture
+* develop pipeline stages
+* generate supporting files
+* debug implementation issues
+* coordinate development tasks
+
+Development session exports are stored in:
+
+```text
+bob_sessions/
+```
+
+### Pipeline Component
+
+Bob's document-understanding capability is also used in provenance recovery to perform fuzzy semantic matching between extracted rules and historical documentation.
+
+This is intentionally limited to provenance matching and report narration rather than deterministic divergence detection.
+
+---
+
+# Positioning
+
+The Legacy Provenance Engine is designed as a **pre-flight risk layer for modernization**.
+
+Existing modernization and code-analysis tools can help with:
+
+* code translation
+* compiler upgrades
+* dependency analysis
+* code explanation
+* test generation
+* behavioral testing
+
+This project focuses on a different question:
+
+> **Before or during modernization, which legacy business rules have historical evidence behind them, where did they come from, and did the modernization preserve them?**
+
+It is therefore intended to complement existing modernization tooling rather than replace it.
+
+---
+
+# Current Status
+
+The project is currently structured around a controlled demonstration fixture.
+
+The planned implementation includes:
+
+* [ ] Fixture COBOL program
+* [ ] Historical transaction dataset
+* [ ] Change-request documentation corpus
+* [ ] Modernized implementation
+* [ ] Rule extraction
+* [ ] Provenance recovery
+* [ ] Golden dataset mining
+* [ ] Divergence verification
+* [ ] Bob custom modes and skills
+* [ ] End-to-end pipeline execution
+* [ ] Final impact metrics
+* [ ] Pitch deck
+* [ ] Demo rehearsal
+
+Impact metrics such as the number of extracted rules, undocumented rules, and detected divergences should be populated after the complete fixture pipeline is executed.
+
+---
+
+# Known Limitations
+
+The current rule extractor is intentionally scoped to a controlled COBOL structure.
+
+It assumes relatively clean, one-paragraph-per-rule code where a rule can be represented as a single `IF` block without complex control flow.
+
+Real-world COBOL may contain:
+
+* nested conditions
+* `GO TO`
+* rules distributed across multiple paragraphs
+* `PERFORM THRU`
+* complex control flow
+* shared business logic
+
+Supporting arbitrary production COBOL would require a more complete COBOL parser and AST-based analysis.
+
+This limitation is deliberate for the current proof-of-concept.
+
+---
+
+# Why This Project Matters
+
+A successful modernization is not simply:
+
+```text
+Old Code → New Code
+```
+
+It should also answer:
+
+```text
+Old Rule
+   ↓
+Why did it exist?
+   ↓
+Did it actually matter?
+   ↓
+Did the new system preserve it?
+   ↓
+If not, what caused the difference?
+```
+
+The Legacy Provenance Engine provides this missing evidence layer.
+
+---
+
+
+---
+
+## One-Line Summary
+
+**Legacy Provenance Engine is an evidence-driven auditing pipeline that extracts legacy business rules, recovers their provenance, measures their historical usage, and detects which rules are silently lost during modernization.**
