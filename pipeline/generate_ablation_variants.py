@@ -38,6 +38,10 @@ ABLATION_DIR = pathlib.Path("legacy/ablation")
 # Template for the output file assignment inside each ablation variant.
 # The variant writes to a rule-specific .dat file so all 4 can coexist.
 OUTPUT_DAT_TEMPLATE = "pipeline/output/ablation_{rule_id}.dat"
+# Path for the original input file used by all variants
+ORIGINAL_INPUT_ASSIGN = '"pipeline/output/cobol_batch_results.dat"'
+# Path for the original output assignment that will be replaced per variant
+ORIGINAL_OUTPUT_ASSIGN = '"pipeline/output/cobol_batch_results.dat"'
 
 # Original output file assignment line — this is what we replace per variant.
 ORIGINAL_OUTPUT_ASSIGN = '"pipeline/output/cobol_batch_results.dat"'
