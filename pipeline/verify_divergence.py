@@ -53,6 +53,7 @@ PAYOUT EPSILON:
 import json
 import pathlib
 import sys
+import yaml
 
 sys.path.insert(0, "modern")
 from claims_eligibility import evaluate_claim  # noqa: E402
@@ -61,12 +62,15 @@ from claims_eligibility import evaluate_claim  # noqa: E402
 # Configuration
 # ---------------------------------------------------------------------------
 
-FREQ_FILE        = pathlib.Path("pipeline/output/firing_frequency.json")
-COBOL_RESULTS    = pathlib.Path("pipeline/output/cobol_batch_results.dat")
-LOG_FILE         = pathlib.Path("history/production_log_2019_2024.jsonl")
-OUTPUT_FILE      = pathlib.Path("pipeline/output/final_report.json")
-
-EPSILON = 0.01  # payout equality threshold
+# Load configuration from YAML
+CONFIG_PATH = pathlib.Path(__file__).with_name("pipeline_config.yaml")
+with CONFIG_PATH.open() as f:
+    _cfg = yaml.safe_load(f)
+FREQ_FILE = pathlib.Path(_cfg["freq_file"])
+COBOL_RESULTS = pathlib.Path(_cfg["cobol_results"])
+LOG_FILE = pathlib.Path(_cfg["log_file"])
+OUTPUT_FILE = pathlib.Path(_cfg["output_file"])
+EPSILON = _cfg["epsilon"]  # payout equality threshold
 
 # ---------------------------------------------------------------------------
 # LLM-authored risk narratives (hardcoded, reviewed, frozen)
@@ -143,58 +147,7 @@ def _compute_scratch(r: dict) -> tuple[int, int]:
     return days_since_lapse, policy_tenure_years
 
 
-# SUPERSEDED — kept for reference until ablation variants are also replaced
-# with compiled COBOL variants. _evaluate_legacy_full is no longer called
-# in the main pipeline; real COBOL output is loaded from cobol_batch_results.dat.
-def _evaluate_legacy_full_python(r: dict) -> tuple[str, float]:  # noqa: dead-code
-    """Python mirror of full COBOL logic (no longer used as ground truth)."""
-    payable = "N"
-    payout  = 0.0
-    days, tenure = _compute_scratch(r)
-    if r["policy_status"] == "A" and r["claim_amount"] <= r["coverage_limit"]:
-        payable = "Y"; payout = r["claim_amount"]
-    if r["policy_status"] == "L" and days <= 30 and tenure > 5:
-        payable = "Y"; payout = r["claim_amount"]
-    if r["state_code"] == "NY" and r["incident_description"].strip() == "":
-        payable = "Y"; payout = r["claim_amount"]
-    if r["fiscal_qtr_end_flag"] == "Y":
-        payout = round(payout * 1.005, 2)
-    return payable, payout
 
-
-def _evaluate_legacy_ablated(r: dict, suppress_rule_id: str) -> tuple[str, float]:
-    """
-    Legacy evaluation with one rule's ACTION suppressed.
-
-    The suppressed rule's condition is still evaluated (it logically fires)
-    but its MOVE/COMPUTE effect is skipped. Used only on records already
-    confirmed to diverge — never on non-diverging records.
-    """
-    payable = "N"
-    payout  = 0.0
-    days, tenure = _compute_scratch(r)
-
-    # STANDARD-ELIGIBILITY-RULE
-    if r["policy_status"] == "A" and r["claim_amount"] <= r["coverage_limit"]:
-        if suppress_rule_id != "R1":
-            payable = "Y"; payout = r["claim_amount"]
-
-    # GRACE-PERIOD-RULE
-    if r["policy_status"] == "L" and days <= 30 and tenure > 5:
-        if suppress_rule_id != "R2":
-            payable = "Y"; payout = r["claim_amount"]
-
-    # STATE-CARVE-OUT-RULE
-    if r["state_code"] == "NY" and r["incident_description"].strip() == "":
-        if suppress_rule_id != "R3":
-            payable = "Y"; payout = r["claim_amount"]
-
-    # ORPHAN-RULE
-    if r["fiscal_qtr_end_flag"] == "Y":
-        if suppress_rule_id != "R4":
-            payout = round(payout * 1.005, 2)
-
-    return payable, payout
 
 
 def _outputs_match(leg: tuple, mod: tuple) -> bool:
@@ -234,6 +187,11 @@ def run(
 
     # Index Stage 3 data by rule_id
     rule_ids   = [r["rule_id"] for r in freq_data]
+    # Load ablation results for each rule (COBOL variants)
+    ablation_results: dict[str, dict[int, tuple[str, float]]] = {
+        rid: _load_cobol_results(pathlib.Path(f"pipeline/output/ablation_{rid}.dat"))
+        for rid in rule_ids
+    }
 
     # ── Step 1: real COBOL output vs. modern ──────────────────────────────
     diverging_records: list[tuple[int, dict, tuple, tuple]] = []
@@ -251,7 +209,7 @@ def run(
 
     for lineno, rec, leg_out, mod_out in diverging_records:
         for rid in rule_ids:
-            ablated = _evaluate_legacy_ablated(rec, suppress_rule_id=rid)
+            ablated = ablation_results[rid][lineno]
             if _outputs_match(ablated, mod_out):
                 divergence_counts[rid] += 1
                 if example_record[rid] is None:

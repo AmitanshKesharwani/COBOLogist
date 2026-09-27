@@ -1,0 +1,5 @@
+freq_file: "pipeline/test/firing_frequency.json"
+cobol_results: "pipeline/test/cobol_batch_results.dat"
+log_file: "pipeline/test/production_log.jsonl"
+output_file: "pipeline/test/final_report.json"
+epsilon: 0.01
