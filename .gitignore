@@ -1,0 +1,9 @@
+# Ignore compiled COBOL binaries
+*.exe
+# Ignore generated ablation data and logs
+pipeline/output/ablation_*.dat
+pipeline/output/ablation_*.log
+# Ignore test directory outputs
+pipeline/test/
+# Ignore final report (generated)
+pipeline/output/final_report.json

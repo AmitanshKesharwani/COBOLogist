@@ -25,7 +25,7 @@ Process:
      skipped). Whichever rule's suppression makes ablated-legacy match modern is the
      responsible rule. This is never run against non-diverging records.
 
-     NOTE: Ablation still uses Python suppression logic (_evaluate_legacy_ablated).
+     NOTE: Ablation now uses compiled COBOL variant programs (one per rule) stored in pipeline/output/ablation_<RULE_ID>.dat.
      This produces correct relative attribution because the comparison is
      modern-output vs. ablated-Python — the absolute payout values are consistent
      within that comparison. Ablation will be replaced with compiled COBOL ablation
@@ -55,8 +55,8 @@ import pathlib
 import sys
 import yaml
 
-sys.path.insert(0, "modern")
-from claims_eligibility import evaluate_claim  # noqa: E402
+# Ensure modern module is importable (project root should be on PYTHONPATH)
+from modern.claims_eligibility import evaluate_claim  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Configuration
